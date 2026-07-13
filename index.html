@@ -243,7 +243,8 @@ const sfx = {
   bossHit(){ beep(180, 90, 0.12, 'square', 0.12); },
   hurt(){ beep(140, 60, 0.3, 'sawtooth', 0.15); },
   throw(){ beep(240, 160, 0.1, 'triangle', 0.1); },
-  roar(){ beep(70, 160, 0.8, 'sawtooth', 0.18); }
+  roar(){ beep(70, 160, 0.8, 'sawtooth', 0.18); },
+  powerup(){ beep(400, 1300, 0.28, 'triangle', 0.14); }
 };
 
 
@@ -253,6 +254,7 @@ let holding = false;
 let player, obstacles, nachos, particles, bubbles, scrollSpeed, spawnGap, score, best, deadAt, elapsed;
 let boss = null, bossTriggered = false, lasers = [], bossChips = [], laserCd = 0;
 let pillarX = 0, pillarTopY = 0, pillarK = 0, introT = 0, introFrom = null;
+let bottles = [], widePillarsLeft = 0, chipsSinceBottle = 0, nextBottleAt = 20;
 const BOSS_AT = 75, BOSS_HP = 20, BOSS_LIVES = 5;
 best = parseInt(localStorage.getItem('nachoquest-best') || '0', 10) || 0;
 document.getElementById('best').textContent = best;
@@ -268,6 +270,10 @@ function reset(){
   bossChips = [];
   laserCd = 0;
   pillarK = 0;
+  bottles = [];
+  widePillarsLeft = 0;
+  chipsSinceBottle = 0;
+  nextBottleAt = 17 + Math.random() * 6;
   scrollSpeed = 175;
   spawnGap = 330;
   score = 0;
@@ -308,6 +314,7 @@ function startGame(){
   } else if (q.includes('boss')){
     score = BOSS_AT - 1; updateHud();
   }
+  if (q.includes('beer')){ nextBottleAt = 1; } // debug: first column brings a bottle
 }
 
 function die(){
@@ -327,6 +334,7 @@ function startBossIntro(){
   state = 'bossIntro';
   holding = false;
   nachos = [];
+  bottles = [];
   introT = 0;
   introFrom = { x: player.x, y: player.y };
   pillarX = Math.max(150, W * 0.2);
@@ -472,14 +480,16 @@ function winGame(){
 // ---------- spawning ----------
 function spawnObstacle(x){
   const marginTop = 70, marginBot = 110;
-  const gapH = Math.max(150, 205 - score * 0.6);
+  let gapH = Math.max(150, 205 - score * 0.6);
+  let wide = false;
+  if (widePillarsLeft > 0){ gapH += 75; widePillarsLeft--; wide = true; } // beer courage
   const gapY = marginTop + gapH/2 + Math.random() * (H - marginTop - marginBot - gapH);
   const w = 86;
   const holes = [];
   for (let i = 0; i < 7; i++){
     holes.push({ u: 0.15 + Math.random()*0.7, v: Math.random(), r: 6 + Math.random()*13 });
   }
-  const obs = { x, gapY, gapH, w, holes };
+  const obs = { x, gapY, gapH, w, holes, wide };
   obstacles.push(obs);
   // a nacho in the gap — the risky, tasty line
   addNacho(x + w/2, gapY);
@@ -488,6 +498,17 @@ function spawnObstacle(x){
   for (let i = 0; i < n; i++){
     addNacho(x + w + 60 + Math.random() * (spawnGap - 140),
              90 + Math.random() * (H - 240));
+  }
+  // every twenty-ish chips, a glowing cerveza drifts by
+  chipsSinceBottle += 1 + n;
+  if (chipsSinceBottle >= nextBottleAt){
+    chipsSinceBottle = 0;
+    nextBottleAt = 17 + Math.random() * 6;
+    bottles.push({
+      x: x + w + 80 + Math.random() * (spawnGap - 200),
+      y: 130 + Math.random() * (H - 340),
+      phase: Math.random() * Math.PI * 2
+    });
   }
 }
 function addNacho(x, y){
@@ -503,6 +524,21 @@ function spawnCrumb(x, y, big){
     t: 0,
     col: Math.random() < 0.5 ? '#F0C25C' : '#C97A16'
   });
+}
+function spawnSparkles(x, y){
+  for (let k = 0; k < 14; k++){
+    const a = Math.random() * Math.PI * 2;
+    const sp = 80 + Math.random() * 260;
+    particles.push({
+      x, y,
+      vx: Math.cos(a) * sp,
+      vy: Math.sin(a) * sp - 60,
+      r: 2 + Math.random() * 3.5,
+      life: 0.5 + Math.random() * 0.4,
+      t: 0,
+      col: k % 2 ? '#4FC3FF' : '#BDE9FF'
+    });
+  }
 }
 function spawnCheeseBurst(x, y){
   const cols = ['#FFDE7A', '#F5A82E', '#E8890C'];
@@ -584,8 +620,10 @@ function update(dt){
   const dx = scrollSpeed * dt;
   for (const o of obstacles) o.x -= dx;
   for (const n of nachos)    n.x -= dx;
+  for (const bt of bottles)  bt.x -= dx;
   obstacles = obstacles.filter(o => o.x + o.w > -20);
   nachos    = nachos.filter(n => n.x > -40);
+  bottles   = bottles.filter(bt => bt.x > -50);
 
   if (obstacles.length === 0 || obstacles[obstacles.length-1].x < W - spawnGap){
     spawnObstacle(Math.max(W + 40, obstacles.length ? obstacles[obstacles.length-1].x + spawnGap : W + 40));
@@ -625,6 +663,19 @@ function update(dt){
       for (let k = 0; k < 6; k++) spawnCrumb(n.x, n.y, false);
       updateHud();
       if (!bossTriggered && score >= BOSS_AT){ bossTriggered = true; startBossIntro(); return; }
+    }
+  }
+
+  // grab the glowing cerveza: the next 5 pillars go easy on you
+  for (let i = bottles.length - 1; i >= 0; i--){
+    const bt = bottles[i];
+    const by = bt.y + Math.sin(elapsed * 2 + bt.phase) * 8;
+    const ddx = bt.x - player.x, ddy = by - player.y;
+    if (ddx*ddx + ddy*ddy < (player.r + 20) * (player.r + 20)){
+      bottles.splice(i, 1);
+      widePillarsLeft = 5;
+      sfx.powerup();
+      spawnSparkles(bt.x, by);
     }
   }
 
@@ -669,6 +720,9 @@ function draw(){
   // nachos
   for (const n of nachos) drawNacho(n);
 
+  // cervezas
+  drawBottles();
+
   // boss projectiles
   drawLasers();
   drawBossChips();
@@ -699,6 +753,9 @@ function draw(){
   // boss UI
   drawBossBanner();
   drawBossHearts();
+
+  // beer boost indicator
+  drawBottleHud();
 }
 
 function drawColumn(o){
@@ -722,8 +779,8 @@ function drawColumn(o){
         ctx.fill();
       }
     }
-    // cap lips at the gap
-    ctx.fillStyle = '#E8890C';
+    // cap lips at the gap (blue while the beer boost is widening them)
+    ctx.fillStyle = o.wide ? '#5FA8D8' : '#E8890C';
     if (y1 === topEdge) roundedCap(o.x - 6, topEdge - 18, o.w + 12, 18);
     if (y0 === botEdge) roundedCap(o.x - 6, botEdge, o.w + 12, 18);
   }
@@ -801,6 +858,71 @@ function drawNacho(n){
   ctx.translate(n.x, y);
   ctx.rotate(n.rot + Math.sin(elapsed*2 + n.phase) * 0.15);
   paintChip(n.r);
+  ctx.restore();
+}
+
+function paintBottle(s){
+  // little amber cerveza, assumes the transform is already set
+  ctx.save();
+  ctx.scale(s, s);
+  ctx.fillStyle = '#B95C1B';
+  ctx.beginPath();
+  ctx.moveTo(-7, 18);
+  ctx.lineTo(-7, -2);
+  ctx.quadraticCurveTo(-7, -6, -3, -8);
+  ctx.lineTo(-3, -14);
+  ctx.lineTo(3, -14);
+  ctx.lineTo(3, -8);
+  ctx.quadraticCurveTo(7, -6, 7, -2);
+  ctx.lineTo(7, 18);
+  ctx.closePath();
+  ctx.fill();
+  // glass highlight
+  ctx.fillStyle = 'rgba(255,255,255,0.28)';
+  ctx.fillRect(-4.5, -6, 2.5, 20);
+  // cap
+  ctx.fillStyle = '#E8C64A';
+  ctx.fillRect(-3.8, -17, 7.6, 4);
+  // label
+  ctx.fillStyle = '#FFF6E0';
+  ctx.fillRect(-7, 3, 14, 8);
+  ctx.fillStyle = '#4FC3FF';
+  ctx.fillRect(-7, 5.5, 14, 3);
+  ctx.restore();
+}
+
+function drawBottles(){
+  for (const bt of bottles){
+    const y = bt.y + Math.sin(elapsed * 2 + bt.phase) * 8;
+    const pulse = 0.6 + 0.4 * Math.sin(elapsed * 4 + bt.phase);
+    ctx.save();
+    ctx.translate(bt.x, y);
+    ctx.rotate(Math.sin(elapsed * 1.5 + bt.phase) * 0.15);
+    // blue halo
+    const g = ctx.createRadialGradient(0, 0, 4, 0, 0, 36);
+    g.addColorStop(0, `rgba(80,190,255,${0.45 * pulse})`);
+    g.addColorStop(1, 'rgba(80,190,255,0)');
+    ctx.fillStyle = g;
+    ctx.beginPath(); ctx.arc(0, 0, 36, 0, Math.PI*2); ctx.fill();
+    ctx.shadowColor = 'rgba(80,190,255,0.9)';
+    ctx.shadowBlur = 14 + 8 * pulse;
+    paintBottle(1.15);
+    ctx.restore();
+  }
+}
+
+function drawBottleHud(){
+  if (widePillarsLeft <= 0 || state !== 'play') return;
+  ctx.save();
+  ctx.translate(38, 96);
+  ctx.shadowColor = 'rgba(80,190,255,0.9)';
+  ctx.shadowBlur = 10;
+  paintBottle(0.8);
+  ctx.shadowBlur = 0;
+  ctx.fillStyle = '#4A2C0F';
+  ctx.font = 'bold 17px "Arial Rounded MT Bold", ui-rounded, sans-serif';
+  ctx.textAlign = 'left';
+  ctx.fillText('×' + widePillarsLeft, 16, 7);
   ctx.restore();
 }
 
