@@ -242,22 +242,39 @@ const sfx = {
   start(){ beep(330, 660, 0.12, 'triangle', 0.1); }
 };
 
-// ---------- soundtrack: 8-bar chiptune fiesta loop, all synthesized ----------
+// ---------- soundtrack: 8-bar mariachi loop, all synthesized ----------
+// trumpet duet in parallel thirds, guitarron bass on the beats,
+// vihuela chord strums on the backbeats — no drum kit, like the real thing
 const music = (() => {
-  let gainNode = null, noiseBuf = null, timer = null, step = 0, nextT = 0, on = false;
+  let gainNode = null, timer = null, step = 0, nextT = 0, on = false;
   const BPM = 152, STEP = 60 / BPM / 2; // eighth notes
   const SPB = 8, BARS = 8;
-  // F major, chords per bar: F F Bb C | F Bb C F  (midi note numbers, 0 = rest)
+  // F major, chords per bar: F F Bb C7 | F Bb C7 F  (midi numbers, 0 = rest)
   const bassRoot = [41, 41, 46, 48, 41, 46, 48, 41];
+  const chords = [
+    [65,69,72], [65,69,72], [65,70,74], [64,67,70],
+    [65,69,72], [65,70,74], [64,67,70], [65,69,72]
+  ];
   const lead = [
-    72,0,69,72, 0,74,72,69,
-    65,0,65,67, 69,67,65,0,
-    70,0,70,72, 74,72,70,69,
-    67,0,64,0,  67,0,71,0,
-    72,0,69,72, 0,74,76,77,
-    77,0,74,70, 0,74,72,70,
-    71,0,67,71, 74,71,67,64,
-    65,0,69,0,  72,0,77,0
+    65,69,72,77, 0,77,0,77,
+    76,77,76,74, 72,0,69,0,
+    70,0,74,0,   77,0,74,77,
+    79,0,76,0,   72,0,76,0,
+    77,0,72,69,  65,69,72,77,
+    74,77,74,70, 0,70,72,74,
+    76,0,72,0,   67,71,74,76,
+    77,0,77,0,   77,77,77,0
+  ];
+  // second trumpet, a diatonic third below
+  const harm = [
+    62,65,69,74, 0,74,0,74,
+    72,74,72,70, 69,0,65,0,
+    67,0,70,0,   74,0,70,74,
+    76,0,72,0,   69,0,72,0,
+    74,0,69,65,  62,65,69,74,
+    70,74,70,67, 0,67,69,70,
+    72,0,69,0,   64,67,71,72,
+    74,0,74,0,   74,74,74,0
   ];
   const mtof = m => 440 * Math.pow(2, (m - 69) / 12);
   function ensure(){
@@ -266,49 +283,48 @@ const music = (() => {
     if (!gainNode){
       gainNode = audioCtx.createGain();
       gainNode.connect(audioCtx.destination);
-      const len = Math.floor(audioCtx.sampleRate * 0.06);
-      noiseBuf = audioCtx.createBuffer(1, len, audioCtx.sampleRate);
-      const d = noiseBuf.getChannelData(0);
-      for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
     }
     gainNode.gain.value = muted ? 0 : 1;
   }
-  function tone(t, midi, dur, type, vol){
+  function trumpet(t, midi, dur, vol){
     const o = audioCtx.createOscillator(), g = audioCtx.createGain();
-    o.type = type; o.frequency.value = mtof(midi);
+    const f = audioCtx.createBiquadFilter();
+    o.type = 'sawtooth'; o.frequency.value = mtof(midi);
+    f.type = 'lowpass'; f.frequency.value = 2200; f.Q.value = 1;
     g.gain.setValueAtTime(0.0001, t);
-    g.gain.linearRampToValueAtTime(vol, t + 0.01);
+    g.gain.linearRampToValueAtTime(vol, t + 0.02);
+    g.gain.setValueAtTime(vol * 0.8, t + dur * 0.7);
     g.gain.exponentialRampToValueAtTime(0.001, t + dur);
-    o.connect(g).connect(gainNode);
+    o.connect(f); f.connect(g); g.connect(gainNode);
     o.start(t); o.stop(t + dur + 0.02);
   }
-  function kick(t){
+  function bassNote(t, midi){
     const o = audioCtx.createOscillator(), g = audioCtx.createGain();
-    o.type = 'sine';
-    o.frequency.setValueAtTime(120, t);
-    o.frequency.exponentialRampToValueAtTime(45, t + 0.1);
+    o.type = 'triangle'; o.frequency.value = mtof(midi);
     g.gain.setValueAtTime(0.16, t);
-    g.gain.exponentialRampToValueAtTime(0.001, t + 0.12);
-    o.connect(g).connect(gainNode);
-    o.start(t); o.stop(t + 0.14);
+    g.gain.exponentialRampToValueAtTime(0.001, t + STEP * 3.5);
+    o.connect(g); g.connect(gainNode);
+    o.start(t); o.stop(t + STEP * 3.6);
   }
-  function hat(t){
-    const s = audioCtx.createBufferSource(); s.buffer = noiseBuf;
-    const f = audioCtx.createBiquadFilter(); f.type = 'highpass'; f.frequency.value = 6000;
-    const g = audioCtx.createGain();
-    g.gain.setValueAtTime(0.05, t);
-    g.gain.exponentialRampToValueAtTime(0.001, t + 0.045);
-    s.connect(f).connect(g).connect(gainNode);
-    s.start(t);
+  function strum(t, notes){
+    notes.forEach((n, i) => {
+      const tt = t + i * 0.014; // stagger the strings
+      const o = audioCtx.createOscillator(), g = audioCtx.createGain();
+      o.type = 'square'; o.frequency.value = mtof(n);
+      g.gain.setValueAtTime(0.028, tt);
+      g.gain.exponentialRampToValueAtTime(0.001, tt + 0.1);
+      o.connect(g); g.connect(gainNode);
+      o.start(tt); o.stop(tt + 0.12);
+    });
   }
   function schedule(i, t){
     const bar = Math.floor(i / SPB) % BARS, s = i % SPB;
-    const m = lead[bar * SPB + s];
-    if (m) tone(t, m, STEP * 1.8, 'square', 0.05);
-    const root = bassRoot[bar];
-    tone(t, s % 2 ? root + 7 : root, STEP * 0.9, 'triangle', 0.09);
-    if (s % 4 === 0) kick(t);
-    else if (s % 2 === 0) hat(t);
+    const idx = bar * SPB + s;
+    if (lead[idx]) trumpet(t, lead[idx], STEP * 1.7, 0.045);
+    if (harm[idx]) trumpet(t, harm[idx], STEP * 1.7, 0.032);
+    if (s === 0) bassNote(t, bassRoot[bar]);          // oom
+    if (s === 4) bassNote(t, bassRoot[bar] + 7);      // (fifth)
+    if (s === 2 || s === 6) strum(t, chords[bar]);    // pah
   }
   function loop(){
     while (nextT < audioCtx.currentTime + 0.18){
