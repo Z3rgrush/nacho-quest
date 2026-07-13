@@ -1016,13 +1016,24 @@ function drawBoss(){
   ctx.lineWidth = 8;
   ctx.strokeStyle = '#B77F2C';
   ctx.stroke();
-  // cheese drizzle across the belly
-  ctx.strokeStyle = '#FFDE7A';
-  ctx.lineWidth = 9;
+  // sombrero perched on the apex
+  const hatY = base - hh + 10;
+  ctx.fillStyle = '#C94F2E';
   ctx.beginPath();
-  ctx.moveTo(bx - hw*0.45, base - 40);
-  ctx.quadraticCurveTo(bx, base - 90, bx + hw*0.45, base - 36);
+  ctx.ellipse(bx, hatY, 72, 18, 0, 0, Math.PI*2);
+  ctx.fill();
+  ctx.strokeStyle = '#8F3620';
+  ctx.lineWidth = 4;
   ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(bx - 30, hatY);
+  ctx.quadraticCurveTo(bx - 32, hatY - 34, bx, hatY - 40);
+  ctx.quadraticCurveTo(bx + 32, hatY - 34, bx + 30, hatY);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+  ctx.fillStyle = '#E8C64A';
+  ctx.fillRect(bx - 29, hatY - 13, 58, 8);
   // furious little eyes that track the head
   const ey = base - hh*0.52;
   for (const s of [-1, 1]){
@@ -1054,7 +1065,7 @@ function drawBoss(){
   ctx.restore();
   // health bar
   if (!boss.dead && state === 'boss'){
-    const bw = 220, by = base - hh - 32;
+    const bw = 220, by = base - hh - 58; // clear of the sombrero
     ctx.fillStyle = '#FFF6E0';
     ctx.fillRect(bx - bw/2, by, bw, 14);
     ctx.strokeStyle = '#8A4E0B';
