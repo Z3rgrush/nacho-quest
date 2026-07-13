@@ -238,22 +238,36 @@ const sfx = {
   chomp(){ beep(620, 240, 0.09, 'square', 0.12); },
   die(){ beep(300, 55, 0.45, 'sawtooth', 0.16); },
   win(){ [523,659,784,1047].forEach((f,i)=>setTimeout(()=>beep(f,f,0.16,'triangle',0.14), i*110)); },
-  start(){ beep(330, 660, 0.12, 'triangle', 0.1); }
+  start(){ beep(330, 660, 0.12, 'triangle', 0.1); },
+  laser(){ beep(1200, 300, 0.12, 'sawtooth', 0.08); },
+  bossHit(){ beep(180, 90, 0.12, 'square', 0.12); },
+  hurt(){ beep(140, 60, 0.3, 'sawtooth', 0.15); },
+  throw(){ beep(240, 160, 0.1, 'triangle', 0.1); },
+  roar(){ beep(70, 160, 0.8, 'sawtooth', 0.18); }
 };
 
 
 // ---------- state ----------
-let state = 'menu'; // menu | play | dead | win
+let state = 'menu'; // menu | play | bossIntro | boss | dead | win
 let holding = false;
 let player, obstacles, nachos, particles, bubbles, scrollSpeed, spawnGap, score, best, deadAt, elapsed;
+let boss = null, bossTriggered = false, lasers = [], bossChips = [], laserCd = 0;
+let pillarX = 0, pillarTopY = 0, pillarK = 0, introT = 0, introFrom = null;
+const BOSS_AT = 75, BOSS_HP = 20, BOSS_LIVES = 5;
 best = parseInt(localStorage.getItem('nachoquest-best') || '0', 10) || 0;
 document.getElementById('best').textContent = best;
 
 function reset(){
-  player = { x: Math.max(120, W * 0.26), y: H * 0.45, vy: 0, r: 27, angle: 0, chomp: 0 };
+  player = { x: Math.max(120, W * 0.26), y: H * 0.45, vy: 0, r: 27, angle: 0, chomp: 0, flash: 0 };
   obstacles = [];
   nachos = [];
   particles = [];
+  boss = null;
+  bossTriggered = false;
+  lasers = [];
+  bossChips = [];
+  laserCd = 0;
+  pillarK = 0;
   scrollSpeed = 175;
   spawnGap = 330;
   score = 0;
@@ -284,6 +298,16 @@ function startGame(){
   state = 'play';
   hideScreens();
   sfx.start();
+  // hidden debug: ?boss starts one nacho from the boss, ?bossnow skips straight to it
+  const q = location.search;
+  if (q.includes('bossnow')){
+    score = BOSS_AT; updateHud();
+    bossTriggered = true;
+    startBossIntro();
+    introT = 2.3;
+  } else if (q.includes('boss')){
+    score = BOSS_AT - 1; updateHud();
+  }
 }
 
 function die(){
@@ -296,6 +320,144 @@ function die(){
   document.getElementById('overBest').textContent = best;
   updateHud();
   setTimeout(() => show('over'), 550);
+}
+
+// ---------- final boss: EL NACHO GRANDE ----------
+function startBossIntro(){
+  state = 'bossIntro';
+  holding = false;
+  nachos = [];
+  introT = 0;
+  introFrom = { x: player.x, y: player.y };
+  pillarX = Math.max(150, W * 0.2);
+  pillarTopY = H * 0.6;
+  boss = { x: W * 0.75, y: H + 200, hp: BOSS_HP, hits: 0, throwT: 1.4, flash: 0, t: 0, dead: false, deathT: 0 };
+  sfx.roar();
+}
+
+function updateBossIntro(dt){
+  introT += dt;
+  const k = Math.min(1, introT / 2.2);
+  const e = k * k * (3 - 2 * k); // smoothstep
+  pillarK = e;
+  // the head glides down to rest on the pillar
+  player.x = introFrom.x + (pillarX - introFrom.x) * e;
+  player.y = introFrom.y + ((pillarTopY - player.r) - introFrom.y) * e;
+  player.vy = 0;
+  player.angle = 0;
+  // leftover columns rush off screen
+  for (const o of obstacles) o.x -= 500 * dt;
+  obstacles = obstacles.filter(o => o.x + o.w > -20);
+  // the monster heaves up out of the cheese river
+  boss.y = (H + 200) - (260 + 60) * e;
+  boss.t += dt;
+  stepParticles(dt);
+  if (introT >= 2.4){ pillarK = 1; state = 'boss'; }
+}
+
+function updateBoss(dt){
+  boss.t += dt;
+  laserCd -= dt;
+  if (player.chomp > 0) player.chomp -= dt;
+  if (boss.flash > 0) boss.flash -= dt;
+  if (player.flash > 0) player.flash -= dt;
+
+  // head hops on the pillar under gravity
+  const groundY = pillarTopY - player.r;
+  player.vy += 1500 * dt;
+  player.y += player.vy * dt;
+  if (player.y >= groundY){ player.y = groundY; player.vy = 0; }
+  player.angle = Math.max(-0.3, Math.min(0.3, player.vy / 900));
+
+  // monster winds up and hurls chips at the head
+  if (!boss.dead){
+    boss.throwT -= dt;
+    if (boss.throwT <= 0){
+      boss.throwT = 1.7;
+      throwChip();
+    }
+  }
+
+  // lasers fly, chips fly
+  const bob = Math.sin(boss.t * 1.6) * 10;
+  const mx = boss.x, my = boss.y + bob - 110;
+  for (let i = lasers.length - 1; i >= 0; i--){
+    const L = lasers[i];
+    L.x += L.vx * dt; L.y += L.vy * dt;
+    const dx = L.x - mx, dy = L.y - my;
+    if (!boss.dead && dx*dx + dy*dy < 95 * 95){
+      lasers.splice(i, 1);
+      boss.hp--;
+      boss.flash = 0.12;
+      sfx.bossHit();
+      for (let k = 0; k < 6; k++) spawnCrumb(L.x, L.y, false);
+      if (boss.hp <= 0){ defeatBoss(); }
+    } else if (L.x > W + 80 || L.y < -80 || L.y > H + 80){
+      lasers.splice(i, 1);
+    }
+  }
+  for (let i = bossChips.length - 1; i >= 0; i--){
+    const c = bossChips[i];
+    c.x += c.vx * dt; c.y += c.vy * dt; c.rot += c.spin * dt;
+    const dx = c.x - player.x, dy = c.y - player.y;
+    if (dx*dx + dy*dy < (player.r + c.r) * (player.r + c.r)){
+      bossChips.splice(i, 1);
+      boss.hits++;
+      player.flash = 0.5;
+      sfx.hurt();
+      for (let k = 0; k < 10; k++) spawnCrumb(player.x, player.y, true);
+      if (boss.hits >= BOSS_LIVES){ die(); return; }
+    } else if (c.x < -60 || c.y > H + 60 || c.y < -60){
+      bossChips.splice(i, 1);
+    }
+  }
+
+  // downfall: the monster crumbles into the last of the nachos
+  if (boss.dead){
+    boss.deathT += dt;
+    if (boss.deathT > 1.2){
+      score = GOAL;
+      updateHud();
+      winGame();
+      return;
+    }
+  }
+  stepParticles(dt);
+}
+
+function bossAction(){
+  const groundY = pillarTopY - player.r;
+  if (player.y >= groundY - 0.5){ player.vy = -540; } // hop only from the pillar
+  if (laserCd <= 0 && !boss.dead){
+    laserCd = 0.35;
+    const bob = Math.sin(boss.t * 1.6) * 10;
+    const dx = boss.x - player.x, dy = (boss.y + bob - 110) - player.y;
+    const d = Math.hypot(dx, dy) || 1;
+    lasers.push({ x: player.x + player.r, y: player.y, vx: dx / d * 950, vy: dy / d * 950 });
+    player.chomp = 0.22; // fired from the mouth, naturally
+    sfx.laser();
+  }
+}
+
+function throwChip(){
+  const mx = boss.x - 55, my = boss.y - 55;
+  const dx = player.x - mx, dy = player.y - my;
+  const d = Math.hypot(dx, dy) || 1;
+  bossChips.push({ x: mx, y: my, vx: dx / d * 430, vy: dy / d * 430, r: 16, rot: 0, spin: 9 });
+  sfx.throw();
+}
+
+function defeatBoss(){
+  boss.dead = true;
+  boss.deathT = 0;
+  bossChips = [];
+  sfx.win();
+  spawnCheeseBurst(boss.x, boss.y - 110);
+  spawnCheeseBurst(boss.x - 70, boss.y - 170);
+  spawnCheeseBurst(boss.x + 70, boss.y - 60);
+  for (let i = 0; i < 22; i++){
+    spawnCrumb(boss.x + (Math.random() - 0.5) * 200, boss.y - 110 + (Math.random() - 0.5) * 180, true);
+  }
 }
 
 function winGame(){
@@ -367,6 +529,8 @@ function press(){
     if (performance.now() - deadAt > 700){ startGame(); holding = true; }
     return;
   }
+  if (state === 'bossIntro') return;
+  if (state === 'boss'){ bossAction(); return; }
   holding = true;
 }
 function release(){ holding = false; }
@@ -399,6 +563,8 @@ function update(dt){
     if (b.y < -b.r){ b.y = H + b.r; b.x = Math.random()*W; }
   }
 
+  if (state === 'bossIntro'){ updateBossIntro(dt); return; }
+  if (state === 'boss'){ updateBoss(dt); return; }
   if (state !== 'play'){
     // particles still settle during death
     stepParticles(dt);
@@ -458,7 +624,7 @@ function update(dt){
       spawnCheeseBurst(n.x, n.y);
       for (let k = 0; k < 6; k++) spawnCrumb(n.x, n.y, false);
       updateHud();
-      if (score >= GOAL){ winGame(); return; }
+      if (!bossTriggered && score >= BOSS_AT){ bossTriggered = true; startBossIntro(); return; }
     }
   }
 
@@ -491,6 +657,10 @@ function draw(){
   // columns
   for (const o of obstacles) drawColumn(o);
 
+  // boss arena: pillar perch and the monster (river covers his base)
+  drawPillar();
+  drawBoss();
+
   // ceiling drips
   drawDrips();
   // queso floor
@@ -498,6 +668,10 @@ function draw(){
 
   // nachos
   for (const n of nachos) drawNacho(n);
+
+  // boss projectiles
+  drawLasers();
+  drawBossChips();
 
   // crumbs & cheese globs
   for (const p of particles){
@@ -520,7 +694,11 @@ function draw(){
   ctx.globalAlpha = 1;
 
   // hero
-  if (state === 'play' || state === 'dead') drawPlayer();
+  if (state !== 'menu' && state !== 'win') drawPlayer();
+
+  // boss UI
+  drawBossBanner();
+  drawBossHearts();
 }
 
 function drawColumn(o){
@@ -592,13 +770,8 @@ function drawFloor(){
   ctx.fillRect(0, H - 10, W, 10);
 }
 
-function drawNacho(n){
-  const y = n.y + Math.sin(elapsed*3 + n.phase) * 6;
-  ctx.save();
-  ctx.translate(n.x, y);
-  ctx.rotate(n.rot + Math.sin(elapsed*2 + n.phase) * 0.15);
-  const r = n.r;
-  // chip
+function paintChip(r){
+  // chip triangle, assumes the transform is already set
   ctx.beginPath();
   ctx.moveTo(0, -r);
   ctx.lineTo(r*0.95, r*0.75);
@@ -621,12 +794,162 @@ function drawNacho(n){
   ctx.moveTo(-r*0.5, r*0.45);
   ctx.quadraticCurveTo(0, r*0.1, r*0.5, r*0.5);
   ctx.stroke();
+}
+function drawNacho(n){
+  const y = n.y + Math.sin(elapsed*3 + n.phase) * 6;
+  ctx.save();
+  ctx.translate(n.x, y);
+  ctx.rotate(n.rot + Math.sin(elapsed*2 + n.phase) * 0.15);
+  paintChip(n.r);
   ctx.restore();
+}
+
+function drawPillar(){
+  if (!boss || pillarK <= 0) return;
+  const w = 120, x = pillarX - w/2;
+  const top = H - (H - pillarTopY) * pillarK;
+  ctx.fillStyle = '#F5A82E';
+  ctx.fillRect(x, top, w, H - top);
+  ctx.fillStyle = '#C97A16';
+  ctx.fillRect(x, top, 6, H - top);
+  ctx.fillRect(x + w - 6, top, 6, H - top);
+  ctx.fillStyle = '#D98E1B';
+  ctx.beginPath(); ctx.ellipse(pillarX - 20, top + 60, 12, 10, 0, 0, Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(pillarX + 25, top + 130, 15, 12, 0, 0, Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(pillarX - 8, top + 210, 10, 8, 0, 0, Math.PI*2); ctx.fill();
+  ctx.fillStyle = '#E8890C';
+  roundedCap(x - 8, top - 18, w + 16, 18);
+}
+
+function drawBoss(){
+  if (!boss) return;
+  const bob = Math.sin(boss.t * 1.6) * 10;
+  const bx = boss.x, base = boss.y + bob;
+  const hw = 135, hh = 235;
+  ctx.save();
+  if (boss.dead){
+    const k = Math.min(1, boss.deathT / 1.2);
+    ctx.globalAlpha = 1 - k;
+    ctx.translate(bx, base);
+    ctx.rotate(k * 0.6);
+    ctx.translate(-bx, -base + k * 150);
+  }
+  // body: one colossal tortilla chip
+  ctx.beginPath();
+  ctx.moveTo(bx, base - hh);
+  ctx.lineTo(bx + hw, base);
+  ctx.lineTo(bx - hw, base);
+  ctx.closePath();
+  ctx.fillStyle = boss.flash > 0 ? '#FFF3D0' : '#F0C25C';
+  ctx.fill();
+  ctx.lineWidth = 8;
+  ctx.strokeStyle = '#B77F2C';
+  ctx.stroke();
+  // cheese drizzle across the belly
+  ctx.strokeStyle = '#FFDE7A';
+  ctx.lineWidth = 9;
+  ctx.beginPath();
+  ctx.moveTo(bx - hw*0.45, base - 40);
+  ctx.quadraticCurveTo(bx, base - 90, bx + hw*0.45, base - 36);
+  ctx.stroke();
+  // furious little eyes that track the head
+  const ey = base - hh*0.52;
+  for (const s of [-1, 1]){
+    const ex = bx + s * 30;
+    ctx.fillStyle = '#FFF6E0';
+    ctx.beginPath(); ctx.ellipse(ex, ey, 16, 19, 0, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = '#3A1F0B';
+    const look = Math.max(-6, Math.min(6, (player.x - ex) * 0.01));
+    ctx.beginPath(); ctx.arc(ex + look, ey + 4, 7, 0, Math.PI*2); ctx.fill();
+    ctx.strokeStyle = '#3A1F0B';
+    ctx.lineWidth = 6;
+    ctx.beginPath();
+    ctx.moveTo(ex - s*14, ey - 26);
+    ctx.lineTo(ex + s*12, ey - 16);
+    ctx.stroke();
+  }
+  // jagged snaggletooth mouth
+  const myy = base - hh*0.22;
+  ctx.fillStyle = '#5B1D12';
+  ctx.beginPath();
+  ctx.moveTo(bx - 46, myy);
+  for (let i = 1; i <= 6; i++){
+    ctx.lineTo(bx - 46 + i * 15.3, myy + (i % 2 ? 16 : 2));
+  }
+  ctx.lineTo(bx + 46, myy + 24);
+  ctx.lineTo(bx - 46, myy + 24);
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
+  // health bar
+  if (!boss.dead && state === 'boss'){
+    const bw = 220, by = base - hh - 32;
+    ctx.fillStyle = '#FFF6E0';
+    ctx.fillRect(bx - bw/2, by, bw, 14);
+    ctx.strokeStyle = '#8A4E0B';
+    ctx.lineWidth = 3;
+    ctx.strokeRect(bx - bw/2, by, bw, 14);
+    ctx.fillStyle = '#E0442E';
+    ctx.fillRect(bx - bw/2 + 2, by + 2, (bw - 4) * (boss.hp / BOSS_HP), 10);
+  }
+}
+
+function drawLasers(){
+  ctx.lineCap = 'round';
+  for (const L of lasers){
+    const d = Math.hypot(L.vx, L.vy) || 1;
+    const ux = L.vx / d, uy = L.vy / d;
+    ctx.strokeStyle = '#FF5A36';
+    ctx.lineWidth = 6;
+    ctx.beginPath(); ctx.moveTo(L.x - ux*30, L.y - uy*30); ctx.lineTo(L.x, L.y); ctx.stroke();
+    ctx.strokeStyle = '#FFE066';
+    ctx.lineWidth = 2.5;
+    ctx.beginPath(); ctx.moveTo(L.x - ux*30, L.y - uy*30); ctx.lineTo(L.x, L.y); ctx.stroke();
+  }
+}
+
+function drawBossChips(){
+  for (const c of bossChips){
+    ctx.save();
+    ctx.translate(c.x, c.y);
+    ctx.rotate(c.rot);
+    paintChip(c.r);
+    ctx.restore();
+  }
+}
+
+function drawBossBanner(){
+  if (!boss || boss.dead) return;
+  if (state !== 'bossIntro' && !(state === 'boss' && boss.t < 5)) return;
+  ctx.save();
+  ctx.textAlign = 'center';
+  ctx.fillStyle = 'rgba(91,29,18,0.88)';
+  ctx.font = `bold ${Math.round(Math.min(54, W*0.07))}px "Arial Rounded MT Bold", ui-rounded, sans-serif`;
+  ctx.fillText('EL NACHO GRANDE', W/2, H*0.24);
+  ctx.font = 'bold 19px "Arial Rounded MT Bold", ui-rounded, sans-serif';
+  ctx.fillText('SPACE / TAP: jump & fire lasers — dodge his chips!', W/2, H*0.24 + 36);
+  ctx.restore();
+}
+
+function drawBossHearts(){
+  if (!boss || state === 'bossIntro') return;
+  for (let i = 0; i < BOSS_LIVES; i++){
+    ctx.save();
+    ctx.translate(34 + i * 32, 88);
+    ctx.beginPath();
+    ctx.moveTo(0, 7);
+    ctx.bezierCurveTo(-12, -6, -5, -17, 0, -8);
+    ctx.bezierCurveTo(5, -17, 12, -6, 0, 7);
+    ctx.fillStyle = i < BOSS_LIVES - boss.hits ? '#E0442E' : 'rgba(74,44,15,0.25)';
+    ctx.fill();
+    ctx.restore();
+  }
 }
 
 function drawPlayer(){
   const p = player;
   const r = p.r;
+  if (p.flash > 0 && Math.floor(p.flash * 12) % 2 === 0) return; // hit blink
 
   // hinged jaw: the head is split along his mouth line; the halves swing
   // apart twice a second, and snap extra wide right after a bite
