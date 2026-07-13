@@ -73,6 +73,16 @@
     font-family:inherit; color:var(--cocoa);
   }
   #muteBtn:focus-visible{outline:3px solid var(--jalapeno); outline-offset:2px;}
+  #rank{
+    position:fixed; top:66px; left:18px;
+    background:#FFDE7A;
+    border:3px solid var(--rind);
+    border-radius:12px;
+    box-shadow:0 3px 0 var(--rind);
+    padding:4px 12px;
+    font-size:15px;
+    pointer-events:none;
+  }
 
   /* ---------- Screens ---------- */
   .screen{
@@ -163,6 +173,7 @@
   <div class="badge">Best <span class="num" id="best">0</span></div>
   <button id="muteBtn" aria-label="Toggle sound">&#128266;</button>
 </div>
+<div id="rank" hidden>&#127941; <span id="rankName"></span></div>
 
 <div class="screen" id="menu">
   <div class="card">
@@ -179,6 +190,7 @@
     <h2>SPLAT! Cheesed off.</h2>
     <p class="stat">Nachos eaten: <span class="num" id="overScore">0</span></p>
     <p class="stat">Best run: <span class="num" id="overBest">0</span></p>
+    <p class="stat" id="overRankP" hidden>Rank earned: <b id="overRank"></b></p>
     <button class="bigbtn" id="retryBtn">Go back for seconds</button>
     <p class="kbd-hint">or press <b>SPACE</b></p>
   </div>
@@ -188,6 +200,7 @@
   <div class="card">
     <h2>&#127942; EVERY. SINGLE. NACHO.</h2>
     <p class="sub">Every stray nacho in Cheese World, devoured. The prophecy is fulfilled and dinner is ruined.</p>
+    <p class="stat">Title earned: <b>Ronnie Nacharino</b></p>
     <button class="bigbtn" id="againBtn">Eat them all again</button>
   </div>
 </div>
@@ -244,8 +257,17 @@ const sfx = {
   hurt(){ beep(140, 60, 0.3, 'sawtooth', 0.15); },
   throw(){ beep(240, 160, 0.1, 'triangle', 0.1); },
   roar(){ beep(70, 160, 0.8, 'sawtooth', 0.18); },
-  powerup(){ beep(400, 1300, 0.28, 'triangle', 0.14); }
+  powerup(){ beep(400, 1300, 0.28, 'triangle', 0.14); },
+  rankup(){ beep(523, 1046, 0.2, 'triangle', 0.13); }
 };
+
+function setRank(name){
+  rank = name;
+  rankFlashUntil = elapsed + 2.4;
+  document.getElementById('rankName').textContent = name;
+  document.getElementById('rank').hidden = false;
+  sfx.rankup();
+}
 
 
 // ---------- state ----------
@@ -255,7 +277,10 @@ let player, obstacles, nachos, particles, bubbles, scrollSpeed, spawnGap, score,
 let boss = null, bossTriggered = false, lasers = [], bossChips = [], laserCd = 0;
 let pillarX = 0, pillarTopY = 0, pillarK = 0, introT = 0, introFrom = null;
 let bottles = [], widePillarsLeft = 0, chipsSinceBottle = 0, nextBottleAt = 20;
+let rank = '', rankFlashUntil = 0;
 const BOSS_AT = 75, BOSS_HP = 20, BOSS_LIVES = 5;
+const RANKS = [[10, 'Taquito'], [20, 'Big Cheese'], [35, 'Nacho Average Jo'], [50, 'Margarita Machine']];
+const BOSS_RANK = 'Ronnie Nacharino';
 best = parseInt(localStorage.getItem('nachoquest-best') || '0', 10) || 0;
 document.getElementById('best').textContent = best;
 
@@ -274,6 +299,9 @@ function reset(){
   widePillarsLeft = 0;
   chipsSinceBottle = 0;
   nextBottleAt = 17 + Math.random() * 6;
+  rank = '';
+  rankFlashUntil = 0;
+  document.getElementById('rank').hidden = true;
   scrollSpeed = 175;
   spawnGap = 330;
   score = 0;
@@ -325,6 +353,8 @@ function die(){
   if (score > best){ best = score; localStorage.setItem('nachoquest-best', String(best)); }
   document.getElementById('overScore').textContent = score;
   document.getElementById('overBest').textContent = best;
+  document.getElementById('overRankP').hidden = !rank;
+  if (rank) document.getElementById('overRank').textContent = rank;
   updateHud();
   setTimeout(() => show('over'), 550);
 }
@@ -459,6 +489,7 @@ function defeatBoss(){
   boss.dead = true;
   boss.deathT = 0;
   bossChips = [];
+  setRank(BOSS_RANK);
   sfx.win();
   spawnCheeseBurst(boss.x, boss.y - 110);
   spawnCheeseBurst(boss.x - 70, boss.y - 170);
@@ -662,6 +693,7 @@ function update(dt){
       spawnCheeseBurst(n.x, n.y);
       for (let k = 0; k < 6; k++) spawnCrumb(n.x, n.y, false);
       updateHud();
+      for (const [at, name] of RANKS){ if (score === at) setRank(name); }
       if (!bossTriggered && score >= BOSS_AT){ bossTriggered = true; startBossIntro(); return; }
     }
   }
@@ -756,6 +788,23 @@ function draw(){
 
   // beer boost indicator
   drawBottleHud();
+
+  // rank-up splash
+  drawRankFlash();
+}
+
+function drawRankFlash(){
+  if (!rank || elapsed >= rankFlashUntil) return;
+  const remain = rankFlashUntil - elapsed;
+  ctx.save();
+  ctx.globalAlpha = Math.min(1, remain / 0.5); // fade out at the end
+  ctx.textAlign = 'center';
+  ctx.fillStyle = 'rgba(91,29,18,0.9)';
+  ctx.font = 'bold 24px "Arial Rounded MT Bold", ui-rounded, sans-serif';
+  ctx.fillText('RANK UP!', W/2, H*0.32);
+  ctx.font = `bold ${Math.round(Math.min(44, W*0.06))}px "Arial Rounded MT Bold", ui-rounded, sans-serif`;
+  ctx.fillText(rank.toUpperCase(), W/2, H*0.32 + 44);
+  ctx.restore();
 }
 
 function drawColumn(o){
@@ -914,7 +963,7 @@ function drawBottles(){
 function drawBottleHud(){
   if (widePillarsLeft <= 0 || state !== 'play') return;
   ctx.save();
-  ctx.translate(38, 96);
+  ctx.translate(38, 134);
   ctx.shadowColor = 'rgba(80,190,255,0.9)';
   ctx.shadowBlur = 10;
   paintBottle(0.8);
@@ -922,7 +971,7 @@ function drawBottleHud(){
   ctx.fillStyle = '#4A2C0F';
   ctx.font = 'bold 17px "Arial Rounded MT Bold", ui-rounded, sans-serif';
   ctx.textAlign = 'left';
-  ctx.fillText('×' + widePillarsLeft, 16, 7);
+  ctx.fillText('\u00D7' + widePillarsLeft, 16, 7);
   ctx.restore();
 }
 
@@ -1049,7 +1098,7 @@ function drawBossBanner(){
   ctx.font = `bold ${Math.round(Math.min(54, W*0.07))}px "Arial Rounded MT Bold", ui-rounded, sans-serif`;
   ctx.fillText('EL NACHO GRANDE', W/2, H*0.24);
   ctx.font = 'bold 19px "Arial Rounded MT Bold", ui-rounded, sans-serif';
-  ctx.fillText('SPACE / TAP: jump & fire lasers — dodge his chips!', W/2, H*0.24 + 36);
+  ctx.fillText('SPACE / TAP: jump & fire lasers \u2014 dodge his chips!', W/2, H*0.24 + 36);
   ctx.restore();
 }
 
@@ -1057,7 +1106,7 @@ function drawBossHearts(){
   if (!boss || state === 'bossIntro') return;
   for (let i = 0; i < BOSS_LIVES; i++){
     ctx.save();
-    ctx.translate(34 + i * 32, 88);
+    ctx.translate(34 + i * 32, 134);
     ctx.beginPath();
     ctx.moveTo(0, 7);
     ctx.bezierCurveTo(-12, -6, -5, -17, 0, -8);
