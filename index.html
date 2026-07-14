@@ -746,14 +746,14 @@ function update(dt){
     if (ddx*ddx + ddy*ddy < (player.r + n.r) * (player.r + n.r)){
       nachos.splice(i, 1);
       const prev = score;
-      score += n.red ? 3 : 1;
+      score += player.fire > 0 ? 2 : 1; // chips count double while ablaze
       player.chomp = 0.22;
       sfx.chomp();
       spawnCheeseBurst(n.x, n.y);
       for (let k = 0; k < 6; k++) spawnCrumb(n.x, n.y, false);
       if (n.red){
-        // spicy: the head catches fire for a couple of seconds
-        player.fire = 2;
+        // spicy: 5 seconds on fire, every chip eaten meanwhile is worth double
+        player.fire = 5;
         sfx.sizzle();
         spawnFireBurst(n.x, n.y);
       }
@@ -1222,17 +1222,17 @@ function drawPlayer(){
   ctx.translate(p.x, p.y);
   ctx.rotate(p.angle);
 
-  // spicy-chip aftermath: flames lick up around the head
+  // spicy-chip aftermath: big flames lick up around the head
   if (p.fire > 0){
     ctx.globalAlpha = Math.min(1, p.fire * 1.5);
-    for (let i = 0; i < 7; i++){
-      const a = -Math.PI / 2 + (i - 3) * 0.42;
-      const flick = 12 + 9 * Math.sin(elapsed * 13 + i * 2.1);
+    for (let i = 0; i < 9; i++){
+      const a = -Math.PI / 2 + (i - 4) * 0.4;
+      const flick = 20 + 16 * Math.sin(elapsed * 13 + i * 2.1);
       const bx2 = Math.cos(a) * (r + 2), by2 = Math.sin(a) * (r + 2);
-      const tx = Math.cos(a) * (r + 12 + flick), ty = Math.sin(a) * (r + 12 + flick);
+      const tx = Math.cos(a) * (r + 22 + flick), ty = Math.sin(a) * (r + 22 + flick);
       ctx.beginPath();
-      ctx.moveTo(bx2 + Math.cos(a + 1.57) * 7, by2 + Math.sin(a + 1.57) * 7);
-      ctx.quadraticCurveTo(tx, ty, bx2 + Math.cos(a - 1.57) * 7, by2 + Math.sin(a - 1.57) * 7);
+      ctx.moveTo(bx2 + Math.cos(a + 1.57) * 10, by2 + Math.sin(a + 1.57) * 10);
+      ctx.quadraticCurveTo(tx, ty, bx2 + Math.cos(a - 1.57) * 10, by2 + Math.sin(a - 1.57) * 10);
       ctx.closePath();
       ctx.fillStyle = i % 2 ? '#FF8A2A' : '#E0442E';
       ctx.fill();
@@ -1258,6 +1258,17 @@ function drawPlayer(){
   drawJaw(r, splitY, hx, hy, topA, true);
   drawJaw(r, splitY, hx, hy, botA, false);
   ctx.restore();
+
+  // double-points reminder while ablaze
+  if (p.fire > 0){
+    ctx.save();
+    ctx.globalAlpha = Math.min(1, p.fire * 1.5);
+    ctx.textAlign = 'center';
+    ctx.font = 'bold 20px "Arial Rounded MT Bold", ui-rounded, sans-serif';
+    ctx.fillStyle = '#E0442E';
+    ctx.fillText('\u00D72', p.x, p.y - r - 56 - 5 * Math.sin(elapsed * 6));
+    ctx.restore();
+  }
 }
 function drawJaw(r, splitY, hx, hy, ang, isTop){
   ctx.save();
