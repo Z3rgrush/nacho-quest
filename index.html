@@ -316,7 +316,8 @@ const sfx = {
   roar(){ beep(70, 160, 0.8, 'sawtooth', 0.18); },
   powerup(){ beep(400, 1300, 0.28, 'triangle', 0.14); },
   rankup(){ beep(523, 1046, 0.2, 'triangle', 0.13); },
-  sizzle(){ beep(900, 70, 0.5, 'sawtooth', 0.1); }
+  sizzle(){ beep(900, 70, 0.5, 'sawtooth', 0.1); },
+  jalapeno(){ beep(250, 950, 0.3, 'square', 0.1); }
 };
 
 function setRank(name){
@@ -335,8 +336,10 @@ let player, obstacles, nachos, particles, bubbles, scrollSpeed, spawnGap, score,
 let boss = null, bossTriggered = false, lasers = [], bossChips = [], laserCd = 0;
 let pillarX = 0, pillarTopY = 0, pillarK = 0, introT = 0, introFrom = null;
 let bottles = [], widePillarsLeft = 0, chipsSinceBottle = 0, nextBottleAt = 20;
+let jalapenos = [], jalColCountdown = 8;
 let rank = '', rankFlashUntil = 0;
 let columnsPassed = 0, redChipCountdown = 16;
+const JAL_AFTER_COLS = 30, MAGNET_TIME = 6, MAGNET_RANGE = 300;
 const BOSS_HP = 20, BOSS_LIVES = 5;
 const RANKS = [[10, 'Taquito'], [20, 'Big Cheese'], [35, 'Nacho Average Jo'], [50, 'Margarita Machine'], [75, 'El Rancho Weekend Manager']];
 const BOSS_RANK = 'Ronnie Nacharino';
@@ -344,7 +347,7 @@ best = parseInt(localStorage.getItem('nachoquest-best') || '0', 10) || 0;
 document.getElementById('best').textContent = best;
 
 function reset(){
-  player = { x: Math.max(120, W * 0.26), y: H * 0.45, vy: 0, r: 27, angle: 0, chomp: 0, flash: 0, fire: 0 };
+  player = { x: Math.max(120, W * 0.26), y: H * 0.45, vy: 0, r: 27, angle: 0, chomp: 0, flash: 0, fire: 0, magnet: 0 };
   obstacles = [];
   nachos = [];
   particles = [];
@@ -358,6 +361,8 @@ function reset(){
   widePillarsLeft = 0;
   chipsSinceBottle = 0;
   nextBottleAt = 17 + Math.random() * 6;
+  jalapenos = [];
+  jalColCountdown = 6 + Math.round(Math.random() * 6);
   rank = '';
   rankFlashUntil = 0;
   columnsPassed = 0;
@@ -404,6 +409,7 @@ function startGame(){
     columnsPassed = BOSS_COLS - 1; updateHud();
   }
   if (q.includes('beer')){ nextBottleAt = 1; } // debug: first column brings a bottle
+  if (q.includes('jal')){ columnsPassed = JAL_AFTER_COLS; jalColCountdown = 1; updateHud(); } // debug: first column brings a jalapeno
 }
 
 function die(){
@@ -428,6 +434,7 @@ function startBossIntro(){
   holding = false;
   nachos = [];
   bottles = [];
+  jalapenos = [];
   introT = 0;
   introFrom = { x: player.x, y: player.y };
   pillarX = Math.max(150, W * 0.2);
@@ -607,6 +614,15 @@ function spawnObstacle(x){
       phase: Math.random() * Math.PI * 2
     });
   }
+  // deep in the run, jalapenos grow: eat one and nearby chips fly to you
+  if (columnsPassed >= JAL_AFTER_COLS && --jalColCountdown <= 0){
+    jalColCountdown = 6 + Math.round(Math.random() * 6);
+    jalapenos.push({
+      x: x + w + 100 + Math.random() * (spawnGap - 240),
+      y: 140 + Math.random() * (H - 360),
+      phase: Math.random() * Math.PI * 2
+    });
+  }
 }
 function addNacho(x, y){
   // every 15-20 chips, one runs spicy: glows red and is worth 3
@@ -643,7 +659,8 @@ function spawnFireBurst(x, y){
     });
   }
 }
-function spawnSparkles(x, y){
+function spawnSparkles(x, y, cols){
+  cols = cols || ['#4FC3FF', '#BDE9FF'];
   for (let k = 0; k < 14; k++){
     const a = Math.random() * Math.PI * 2;
     const sp = 80 + Math.random() * 260;
@@ -654,7 +671,7 @@ function spawnSparkles(x, y){
       r: 2 + Math.random() * 3.5,
       life: 0.5 + Math.random() * 0.4,
       t: 0,
-      col: k % 2 ? '#4FC3FF' : '#BDE9FF'
+      col: cols[k % cols.length]
     });
   }
 }
@@ -840,9 +857,25 @@ function update(dt){
   for (const o of obstacles) o.x -= dx;
   for (const n of nachos)    n.x -= dx;
   for (const bt of bottles)  bt.x -= dx;
+  for (const j of jalapenos) j.x -= dx;
   obstacles = obstacles.filter(o => o.x + o.w > -20);
   nachos    = nachos.filter(n => n.x > -40);
   bottles   = bottles.filter(bt => bt.x > -50);
+  jalapenos = jalapenos.filter(j => j.x > -50);
+
+  // magnet pull: chips in range drift into the mouth
+  if (player.magnet > 0){
+    player.magnet -= dt;
+    for (const n of nachos){
+      const mdx = player.x - n.x, mdy = player.y - n.y;
+      const d = Math.hypot(mdx, mdy);
+      if (d < MAGNET_RANGE && d > 1){
+        const pull = (140 + 340 * (1 - d / MAGNET_RANGE)) * dt;
+        n.x += mdx / d * pull;
+        n.y += mdy / d * pull;
+      }
+    }
+  }
 
   // the boss shows up once 30 columns have gone by, fed or not
   for (const o of obstacles){
@@ -906,6 +939,19 @@ function update(dt){
     }
   }
 
+  // grab a jalapeno: chips can't resist you for a bit
+  for (let i = jalapenos.length - 1; i >= 0; i--){
+    const j = jalapenos[i];
+    const jy = j.y + Math.sin(elapsed * 2 + j.phase) * 8;
+    const jdx = j.x - player.x, jdy = jy - player.y;
+    if (jdx*jdx + jdy*jdy < (player.r + 20) * (player.r + 20)){
+      jalapenos.splice(i, 1);
+      player.magnet = MAGNET_TIME;
+      sfx.jalapeno();
+      spawnSparkles(j.x, jy, ['#6FBF44', '#B7E58F']);
+    }
+  }
+
   // grab the glowing cerveza: the next 5 pillars go easy on you
   for (let i = bottles.length - 1; i >= 0; i--){
     const bt = bottles[i];
@@ -960,8 +1006,9 @@ function draw(){
   // nachos
   for (const n of nachos) drawNacho(n);
 
-  // cervezas
+  // cervezas y jalapenos
   drawBottles();
+  drawJalapenos();
 
   // boss projectiles
   drawLasers();
@@ -1175,6 +1222,48 @@ function drawBottles(){
     ctx.shadowColor = 'rgba(80,190,255,0.9)';
     ctx.shadowBlur = 14 + 8 * pulse;
     paintBottle(1.15);
+    ctx.restore();
+  }
+}
+
+function drawJalapenos(){
+  for (const j of jalapenos){
+    const y = j.y + Math.sin(elapsed * 2 + j.phase) * 8;
+    const pulse = 0.6 + 0.4 * Math.sin(elapsed * 4 + j.phase);
+    ctx.save();
+    ctx.translate(j.x, y);
+    // green halo
+    const g = ctx.createRadialGradient(0, 0, 3, 0, 0, 34);
+    g.addColorStop(0, `rgba(110,200,70,${0.5 * pulse})`);
+    g.addColorStop(1, 'rgba(110,200,70,0)');
+    ctx.fillStyle = g;
+    ctx.beginPath(); ctx.arc(0, 0, 34, 0, Math.PI*2); ctx.fill();
+    ctx.shadowColor = 'rgba(110,200,70,0.9)';
+    ctx.shadowBlur = 12 + 8 * pulse;
+    ctx.rotate(0.5 + Math.sin(elapsed * 1.5 + j.phase) * 0.15);
+    // pepper body
+    ctx.fillStyle = '#4E8F35';
+    ctx.beginPath();
+    ctx.moveTo(0, -12);
+    ctx.quadraticCurveTo(10, -10, 9, 2);
+    ctx.quadraticCurveTo(8, 14, 0, 18);
+    ctx.quadraticCurveTo(2, 8, -2, 2);
+    ctx.quadraticCurveTo(-6, -6, 0, -12);
+    ctx.closePath();
+    ctx.fill();
+    // shine
+    ctx.strokeStyle = 'rgba(255,255,255,0.35)';
+    ctx.lineWidth = 2.5;
+    ctx.beginPath();
+    ctx.moveTo(4, -6);
+    ctx.quadraticCurveTo(7, 2, 3, 10);
+    ctx.stroke();
+    // stem
+    ctx.fillStyle = '#3E6326';
+    ctx.beginPath();
+    ctx.ellipse(0, -13, 4.5, 3, 0, 0, Math.PI*2);
+    ctx.fill();
+    ctx.fillRect(-1.5, -19, 3, 7);
     ctx.restore();
   }
 }
@@ -1402,6 +1491,20 @@ function drawPlayer(){
   drawJaw(r, splitY, hx, hy, topA, true);
   drawJaw(r, splitY, hx, hy, botA, false);
   ctx.restore();
+
+  // magnet ring while the jalapeno pull is active
+  if (p.magnet > 0){
+    ctx.save();
+    ctx.globalAlpha = Math.min(1, p.magnet) * (0.5 + 0.3 * Math.sin(elapsed * 8));
+    ctx.strokeStyle = '#6FBF44';
+    ctx.lineWidth = 3;
+    ctx.setLineDash([10, 8]);
+    ctx.lineDashOffset = -elapsed * 40;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, r + 14, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
+  }
 
   // double-points reminder while ablaze
   if (p.fire > 0){
