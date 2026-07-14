@@ -1,0 +1,11 @@
+{
+  "name": "nacho-quest-leaderboard",
+  "main": "index.js",
+  "compatibility_date": "2026-07-14",
+  "kv_namespaces": [
+    {
+      "binding": "SCORES",
+      "id": "5496a057a47a4fd28553400bfe9e62f2"
+    }
+  ]
+}
